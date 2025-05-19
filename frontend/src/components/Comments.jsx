@@ -27,7 +27,6 @@ const Comments = ({ postId }) => {
     try {
       const res = await axios.post(
         "http://localhost:5000/api/comments",
-        { postId, text: newComment },  // Use `text` to match backend schema
         { withCredentials: true }
       );
       setComments(prev => [...prev, res.data.comment]);
