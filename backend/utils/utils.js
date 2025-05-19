@@ -48,10 +48,12 @@ const fileRemover = async (key) => {
             }
 
             // Deleting file from Cloudinary
+            const fileType = key.endsWith('.mp4') ? 'video' : 'image';
             await cloudinary.api.delete_resources([`insta-clone/${key}`], {
                 type: 'upload',
-                resource_type: 'image',
+                resource_type: fileType,
             });
+
 
             resolve(true);
         } catch (error) {

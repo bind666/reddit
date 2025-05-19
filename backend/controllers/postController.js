@@ -6,34 +6,40 @@ import { fileUploader, fileRemover } from "../utils/utils.js"; // fileUploader a
 
 export const createPost = asyncHandler(async (req, res, next) => {
     const { title, content } = req.body;
-    const file = req.files?.image; // Assuming the file is sent with the key 'image'
+    const file = req.files?.image; // File sent with key 'image'
 
-    // Validate input
+    // Validate input and file presence
     if (!title || !content || !file) {
         return next(createError(400, "Title, content, and image are required"));
     }
 
-    // Validate file size and type
+    // Validate file type
     const validMimeType = ["image/jpeg", "image/png", "image/gif", "video/mp4"];
     if (!validMimeType.includes(file.mimetype)) {
         return next(createError(422, "Invalid file type. Only image or video files are allowed"));
     }
 
-    const fileSizeInMB = file.size / (1024 * 1024); // Convert size to MB
+    // Validate file size (max 10MB)
+    const fileSizeInMB = file.size / (1024 * 1024);
     if (fileSizeInMB > 10) {
         return next(createError(400, "File size is too large. Max size is 10MB"));
+    }
+
+    // Ensure req.user is defined and has _id
+    if (!req.user || !req.user._id) {
+        return next(createError(401, "Unauthorized: user info missing"));
     }
 
     // Upload file to Cloudinary
     const uploadedFile = await fileUploader(file);
 
-    // Create the post in the database
+    // Create post in DB
     const post = await Post.create({
         title,
         content,
-        image: uploadedFile.secure_url, // Save the Cloudinary URL
-        author: req.user._id,            // Attach user ID from JWT
-        mimetype: file.mimetype.split("/")[0], // image or video
+        image: uploadedFile.secure_url,
+        author: req.user._id,
+        mimetype: file.mimetype.split("/")[0], // 'image' or 'video'
     });
 
     res.status(201).json({
@@ -49,17 +55,24 @@ export const getPosts = asyncHandler(async (req, res, next) => {
     let posts;
     if (authorId) {
         // Fetch posts by specific user
-        posts = await Post.find({ author: authorId }).populate('author', 'name email').sort({ createdAt: -1 });
+        posts = await Post.find({ author: authorId }).populate('author', 'username  email').sort({ createdAt: -1 });
     } else {
         // Fetch all posts
-        posts = await Post.find().populate('author', 'name email').sort({ createdAt: -1 });
+        posts = await Post.find().populate('author', 'username  email').sort({ createdAt: -1 });
     }
 
-    res.status(200).json({
+    // Calculate voteScore for all posts
+    const postsWithVoteCount = posts.map(post => ({
+        ...post._doc,
+        voteScore: post.votes.reduce((sum, vote) => sum + vote.value, 0),
+    }));
+
+    return res.status(200).json({
         success: true,
-        posts,
+        posts: postsWithVoteCount,
     });
 });
+
 
 export const deletePost = asyncHandler(async (req, res, next) => {
     const { id } = req.params;
@@ -88,54 +101,62 @@ export const deletePost = asyncHandler(async (req, res, next) => {
 });
 
 export const voteOnPost = async (req, res) => {
-    try {
-        const { postId } = req.params;
-        const { userId, value } = req.body;
+  try {
+    const userId = req.user._id;
+    const { postId } = req.params;
+    const { value } = req.body; // value must be 1 (upvote) or -1 (downvote)
 
-        if (!mongoose.Types.ObjectId.isValid(postId)) {
-            return res.status(400).json({ error: 'Invalid post ID' });
-        }
-
-        if (!userId || ![1, -1].includes(value)) {
-            return res.status(400).json({ error: 'Invalid vote data' });
-        }
-
-        const post = await Post.findById(postId);
-        if (!post) {
-            return res.status(404).json({ error: 'Post not found' });
-        }
-
-        const existingVoteIndex = post.votes.findIndex(
-            vote => vote.userId.toString() === userId
-        );
-
-        if (existingVoteIndex !== -1) {
-            if (post.votes[existingVoteIndex].value === value) {
-                // Remove vote (toggle off)
-                post.votes.splice(existingVoteIndex, 1);
-            } else {
-                // Change vote direction
-                post.votes[existingVoteIndex].value = value;
-            }
-        } else {
-            post.votes.push({ userId, value });
-        }
-
-        await post.save();
-
-        const voteScore = post.votes.reduce((sum, vote) => sum + vote.value, 0);
-
-        res.status(200).json({
-            message: 'Vote processed',
-            voteScore,
-            votes: post.votes
-        });
-
-    } catch (err) {
-        console.error('Vote error:', err);
-        res.status(500).json({ error: 'Internal server error' });
+    if (!mongoose.Types.ObjectId.isValid(postId)) {
+      return res.status(400).json({ error: "Invalid post ID" });
     }
+
+    if (!userId || ![1, -1].includes(value)) {
+      return res.status(400).json({ error: "Invalid vote data" });
+    }
+
+    const post = await Post.findById(postId);
+    if (!post) {
+      return res.status(404).json({ error: "Post not found" });
+    }
+
+    const existingVoteIndex = post.votes.findIndex(
+      (vote) => vote.userId.toString() === userId.toString()
+    );
+
+    if (existingVoteIndex !== -1) {
+      if (post.votes[existingVoteIndex].value === value) {
+        // User clicked same vote again => remove their vote (toggle off)
+        post.votes.splice(existingVoteIndex, 1);
+      } else {
+        // User clicked opposite vote => update to new vote
+        post.votes[existingVoteIndex].value = value;
+      }
+    } else {
+      // User hasn't voted yet => add their vote
+      post.votes.push({ userId, value });
+    }
+
+    await post.save();
+
+    const voteScore = post.votes.reduce((sum, vote) => sum + vote.value, 0);
+
+    // Find current user's vote (or 0 if none)
+    const userVote =
+      post.votes.find((vote) => vote.userId.toString() === userId.toString())
+        ?.value || 0;
+
+    res.status(200).json({
+      message: "Vote processed",
+      voteScore,
+      userVote,
+      votes: post.votes,
+    });
+  } catch (err) {
+    console.error("Vote error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
 };
+
 
 
 

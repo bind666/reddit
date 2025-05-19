@@ -18,13 +18,21 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser())
 
 
-app.use(fileUpload());
-
+app.use(fileUpload({
+    createParentPath: true,
+}));
 
 app.use('/api/user', userRouter);
 app.use('/api/posts', postRoutes);
 app.use('/api/communities', communityRoutes);
 app.use('/api/comments', commentRoutes);
+
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(err.status || 500).json({
+    message: err.message || 'Something went wrong',
+  });
+});
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => {

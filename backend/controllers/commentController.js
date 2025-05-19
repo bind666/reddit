@@ -2,26 +2,23 @@ import Comment from '../models/Comment.js';
 
 export const createComment = async (req, res) => {
   try {
-    const { postId, content, parentId } = req.body;
-    const authorId = req.user?._id;
+    const { postId, text, parentId } = req.body; // changed content -> text
+    const author = req.user?._id;
 
-    // Validate required fields
-    if (!postId || !content || !authorId) {
+    if (!postId || !text || !author) {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
-    // Create a new comment
     const newComment = new Comment({
       postId,
-      authorId,
-      content,
-      parentId: parentId || null, // Set null if not a reply
+      author,
+      text,
+      parentComment: parentId || null,
     });
 
     await newComment.save();
 
-    // Populate author details
-    const populatedComment = await Comment.findById(newComment._id).populate("authorId", "username profileImage");
+    const populatedComment = await Comment.findById(newComment._id).populate("author", "username profileImage");
 
     return res.status(201).json({
       message: "Comment created successfully",
@@ -33,11 +30,10 @@ export const createComment = async (req, res) => {
   }
 };
 
-
 export const getComments = async (req, res) => {
   const { postId } = req.params;
   try {
-    const comments = await Comment.find({ postId }).populate('author');
+    const comments = await Comment.find({ postId }).populate('author', 'username profileImage');
     res.json(comments);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch comments' });

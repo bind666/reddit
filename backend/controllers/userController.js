@@ -6,13 +6,25 @@ import bcrypt from "bcrypt";
 import { generateCookies } from "../utils/utils.js";
 
 // Register User
+import mongoose from 'mongoose';
+
 const registerUser = asyncHandler(async (req, res, next) => {
     const isUser = await userModel.findOne({ email: req.body.email });
     if (isUser) return next(createError(422, "User already exists"));
 
-    const user = await userModel.create(req.body);
-    res.status(200).json(new ApiResponse(user, "User registered successfully"));
+    try {
+        const user = await userModel.create(req.body);
+        res.status(201).json(new ApiResponse(user, "User registered successfully"));
+    } catch (error) {
+        if (error instanceof mongoose.Error.ValidationError) {
+            // Collect all validation errors messages
+            const messages = Object.values(error.errors).map(e => e.message);
+            return next(createError(422, messages.join(', ')));
+        }
+        return next(error); // Other errors
+    }
 });
+
 
 // Login User
 const loginUser = asyncHandler(async (req, res, next) => {
